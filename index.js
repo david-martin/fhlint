@@ -22,8 +22,7 @@ function checkJSStringUsages(arr, dir, result, omit, cb) {
     if (err) {
       if (err.code != 1) return cb(err); // grep exits with 1 if no find
       return cb();
-    } 
-    
+    }
 
     var results = stdout.trim().split('\n');
     if (stdout.trim().split('\n').length > 0) {
@@ -104,7 +103,7 @@ module.exports = function(dir, cb) {
         }, function (err) {
           if (err) return pcb(err);
 
-          npm.commands.show(['fh-mbaas-api', 'version'], function(err, data) {
+          npm.commands.show(['fh-mbaas-api', 'version'], true, function(err, data) {
             if (err) return pcb(err);
 
             var latestMbaasVersion = data[Object.keys(data)[0]].version;
