@@ -25,8 +25,8 @@ function checkJSStringUsages(arr, dir, result, omit, cb) {
     }
 
     var results = stdout.trim().split('\n');
-    if (stdout.trim().split('\n').length > 0) {
-      result.warnings.push('Found usage of deprecated api(s) ' + stdout);
+    if (stdout != '' && results.length > 0) {
+      result.warnings.push('Found usage of deprecated api(s) stdout:\'' + stdout + '\'');
     }
     return cb();
   });
@@ -64,7 +64,7 @@ module.exports = function(dir, cb) {
           process.env.DEBUG && console.log(latestJSSDKVersion);
 
           try {
-            if (!semver.satisfies(latestJSSDKVersion, result.versions.jSSDKVersion)) {
+            if (!semver.satisfies(latestJSSDKVersion, result.versions.jSSDKVersion.replace(/-BUILD-NUMBER/g, ''))) {
               result.warnings.push('fh js-sdk version (' + result.versions.jSSDKVersion + ') does not satisfy the latest version ' + latestJSSDKVersion);
             }
           } catch (e) {
