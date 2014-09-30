@@ -6,6 +6,21 @@ var async = require('async');
 var semver = require('semver');
 var request = require('request');
 
+function checkJSStringUsages(arr, dir, result, cb) {
+  // find . -iname '*.js' -not -path "./node_modules/*" | xargs grep '$fh.act'
+  require('child_process').exec("find " + dir + " -iname '*.js' -not -path \"./node_modules/*\" | xargs grep -in '" + arr.join('\\|') + "'", {
+    cwd: process.cwd()
+  }, function(err, stdout, stderr) {
+    if (err) return cb(err);
+
+    var results = stdout.split('\n');
+    if (stdout.split('\n').length > 0) {
+      result.warnings.push('Found usage of deprecated api(s) ' + stdout);
+    }
+    return cb();
+  });
+}
+
 module.exports = function(dir, cb) {
   var result = {
     versions: {},
@@ -16,7 +31,7 @@ module.exports = function(dir, cb) {
     if (err) return cb(err);
     result.type = res;
 
-    async.parallel([function hasJSSDK(pcb) {
+    async.parallel([function jSSDKVersionCheck(pcb) {
       if (res.flags.hasJSSDK) {
         // check jssdk version
         var contents = fs.readFileSync(path.join(dir, 'www/feedhenry.js'));
@@ -48,7 +63,19 @@ module.exports = function(dir, cb) {
       } else {
         return pcb();
       }
-    }, function hasApplicationJShasPackageJson(pcb) {
+    }, function deprecatedClientAPICheck(pcb) {
+      if (res.flags.hasJSSDK) {
+        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.acc', '$fh.audio', '$fh.cam', '$fh.contacts', '$fh.data', '$fh.env', '$fh.feed', '$fh.file', '$fh.handlers', '$fh.geoip', '$fh.geo', '$fh.log', '$fh.map', '$fh.send', '$fh.notify', '$fh.ready', '$fh.web', '$fh.webview'], dir, result, pcb);
+      } else {
+        return pcb();
+      }
+    }, function deprecatedCloudAPICheck(pcb) {
+      if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
+        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.web', '$fh.log', '$fh.parse', '$fh.stringify'], dir, result, pcb);
+      } else {
+        return pcb();
+      }
+    }, function fhMbaasVersionCheck(pcb) {
       if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
         // check fh-mbaas-api version
         // console.log(path.join(dir, 'package.json'));
@@ -59,12 +86,6 @@ module.exports = function(dir, cb) {
         } else {
           result.warnings.push('fh-mbaas-api not found in package.json dependencies');
         }
-
-        ['fh-webapp', 'fh-api', 'fh-nodeapp'].forEach(function(dep) {
-          if (package.dependencies[dep] != null) {
-            result.warnings.push('Detected deprecated dependency ' + dep);
-          }
-        });
 
         npm.load({
           loaded: false,
@@ -92,6 +113,18 @@ module.exports = function(dir, cb) {
       } else {
         return pcb();
       }
+    }, function deprecatedDepsCheck(pcb) {
+      if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
+        // check fh-mbaas-api version
+        // console.log(path.join(dir, 'package.json'));
+        var package = JSON.parse(fs.readFileSync(path.join(dir, 'package.json')));
+        ['fh-webapp', 'fh-api', 'fh-nodeapp', 'fh-mbaas-express'].forEach(function(dep) {
+          if (package.dependencies[dep] != null) {
+            result.warnings.push('Detected deprecated dependency (' + dep + ') in package.json');
+          }
+        });
+      }
+      return pcb();
     }], function(err, res) {
       return cb(null, result);
     });
