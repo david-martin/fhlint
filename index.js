@@ -58,11 +58,10 @@ module.exports = function(dir, cb) {
           result.versions.fhMbaasApiVersion = package.dependencies['fh-mbaas-api'];
         } else {
           result.warnings.push('fh-mbaas-api not found in package.json dependencies');
-          return pcb();
         }
 
         ['fh-webapp', 'fh-api', 'fh-nodeapp'].forEach(function(dep) {
-          if (package.dependencies[dep]) {
+          if (package.dependencies[dep] != null) {
             result.warnings.push('Detected deprecated dependency ' + dep);
           }
         });
