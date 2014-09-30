@@ -6,15 +6,27 @@ var async = require('async');
 var semver = require('semver');
 var request = require('request');
 
-function checkJSStringUsages(arr, dir, result, cb) {
+function checkJSStringUsages(arr, dir, result, omit, cb) {
   // find . -iname '*.js' -not -path "./node_modules/*" | xargs grep '$fh.act'
-  require('child_process').exec("find " + dir + " -iname '*.js' -not -path \"./node_modules/*\" | xargs grep -in '" + arr.join('\\|') + "'", {
+  var omits = '';
+  if (omit.length) {
+    omit.forEach(function(str) {
+      omits += '-not -path \"' + str + '\" ';
+    });
+  }
+  var command = "find " + require('path').resolve(dir) + " -iname '*.js' " + omits + " | xargs grep -in '" + arr.join('\\|') + "'";
+  process.env.DEBUG && console.log(command);
+  require('child_process').exec(command, {
     cwd: process.cwd()
   }, function(err, stdout, stderr) {
-    if (err) return cb(err);
+    if (err) {
+      if (err.code != 1) return cb(err); // grep exits with 1 if no find
+      return cb();
+    } 
+    
 
-    var results = stdout.split('\n');
-    if (stdout.split('\n').length > 0) {
+    var results = stdout.trim().split('\n');
+    if (stdout.trim().split('\n').length > 0) {
       result.warnings.push('Found usage of deprecated api(s) ' + stdout);
     }
     return cb();
@@ -34,13 +46,14 @@ module.exports = function(dir, cb) {
     async.parallel([function jSSDKVersionCheck(pcb) {
       if (res.flags.hasJSSDK) {
         // check jssdk version
-        var contents = fs.readFileSync(path.join(dir, 'www/feedhenry.js'));
+        // Try first location
+        var contents = fs.readFileSync(res.globs.hasJSSDKLocation[0]);
         var regex = /\"?sdk_version\"?:.*?\"(.+?)\"/g;
         var matches = regex.exec(contents.toString('utf-8'));
         if (matches && matches.length > 1) {
           result.versions.jSSDKVersion = matches[1];
         } else {
-          result.warnings.push('fh js-sdk version not found in www/feedhenry.js');
+          result.warnings.push('fh js-sdk version not found in ' + res.globs.hasJSSDKLocation[0]);
           return pcb();
         }
 
@@ -49,7 +62,7 @@ module.exports = function(dir, cb) {
 
           var package = JSON.parse(body);
           var latestJSSDKVersion = package.version.replace(/-BUILD-NUMBER/g, '');
-          // console.log(latestJSSDKVersion);
+          process.env.DEBUG && console.log(latestJSSDKVersion);
 
           try {
             if (!semver.satisfies(latestJSSDKVersion, result.versions.jSSDKVersion)) {
@@ -65,35 +78,33 @@ module.exports = function(dir, cb) {
       }
     }, function deprecatedClientAPICheck(pcb) {
       if (res.flags.hasJSSDK) {
-        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.acc', '$fh.audio', '$fh.cam', '$fh.contacts', '$fh.data', '$fh.env', '$fh.feed', '$fh.file', '$fh.handlers', '$fh.geoip', '$fh.geo', '$fh.log', '$fh.map', '$fh.send', '$fh.notify', '$fh.ready', '$fh.web', '$fh.webview'], dir, result, pcb);
+        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.acc', '$fh.audio', '$fh.cam', '$fh.contacts', '$fh.data', '$fh.env', '$fh.feed', '$fh.file', '$fh.handlers', '$fh.geoip', '$fh.geo', '$fh.log', '$fh.map', '$fh.send', '$fh.notify', '$fh.ready', '$fh.web', '$fh.webview'], dir, result, ['./node_modules/*'].concat(res.globs.hasJSSDKLocation), pcb);
       } else {
         return pcb();
       }
     }, function deprecatedCloudAPICheck(pcb) {
       if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
-        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.web', '$fh.log', '$fh.parse', '$fh.stringify'], dir, result, pcb);
+        checkJSStringUsages(['$fh.act', '$fh.push', '$fh.web', '$fh.log', '$fh.parse', '$fh.stringify'], dir, result, ['./node_modules/*'], pcb);
       } else {
         return pcb();
       }
     }, function fhMbaasVersionCheck(pcb) {
       if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
         // check fh-mbaas-api version
-        // console.log(path.join(dir, 'package.json'));
-        var package = JSON.parse(fs.readFileSync(path.join(dir, 'package.json')));
-        // console.log(package);
+        process.env.DEBUG && console.log(path.join(dir, 'package.json'));
+        var package = JSON.parse(fs.readFileSync(res.globs.hasPackageJsonLocation[0]));
+        process.env.DEBUG && console.log(package);
         if (package.dependencies['fh-mbaas-api']) {
           result.versions.fhMbaasApiVersion = package.dependencies['fh-mbaas-api'];
         } else {
           result.warnings.push('fh-mbaas-api not found in package.json dependencies');
         }
-
         npm.load({
-          loaded: false,
-          silent: true
+          loaded: false
         }, function (err) {
           if (err) return pcb(err);
 
-          npm.commands.show(['fh-mbaas-api', 'version'], true, function(err, data) {
+          npm.commands.show(['fh-mbaas-api', 'version'], function(err, data) {
             if (err) return pcb(err);
 
             var latestMbaasVersion = data[Object.keys(data)[0]].version;
@@ -116,7 +127,7 @@ module.exports = function(dir, cb) {
     }, function deprecatedDepsCheck(pcb) {
       if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
         // check fh-mbaas-api version
-        // console.log(path.join(dir, 'package.json'));
+        process.env.DEBUG && console.log(path.join(dir, 'package.json'));
         var package = JSON.parse(fs.readFileSync(path.join(dir, 'package.json')));
         ['fh-webapp', 'fh-api', 'fh-nodeapp', 'fh-mbaas-express'].forEach(function(dep) {
           if (package.dependencies[dep] != null) {
@@ -126,7 +137,7 @@ module.exports = function(dir, cb) {
       }
       return pcb();
     }], function(err, res) {
-      return cb(null, result);
+      return cb(err, result);
     });
   });
 };
