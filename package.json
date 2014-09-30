@@ -1,6 +1,6 @@
 {
   "name": "fhlint",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "FeedHenry App sdk & versions checker",
   "main": "index.js",
   "bin": {
