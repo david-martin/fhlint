@@ -1,10 +1,14 @@
 var fhapptype = require('fhapptype');
 var path = require('path');
-var fs = require('fs');
 var npm = require('npm');
 var async = require('async');
 var semver = require('semver');
 var request = require('request');
+var jsdiff = require('diff');
+var mkdirp = require('mkdirp');
+var fs = require('fs');
+var http = require('http');
+var https = require('https');
 
 function checkJSStringUsages(arr, dir, result, omit, cb) {
   // find . -iname '*.js' -not -path "./node_modules/*" | xargs grep '$fh.act'
@@ -44,33 +48,55 @@ module.exports = function(dir, cb) {
 
     async.parallel([function jSSDKVersionCheck(pcb) {
       if (res.flags.hasJSSDK) {
-        // check jssdk version
-        // Try first location
-        var contents = fs.readFileSync(res.globs.hasJSSDKLocation[0]);
-        var regex = /\"?sdk_version\"?:.*?\"(.+?)\"/g;
-        var matches = regex.exec(contents.toString('utf-8'));
-        if (matches && matches.length > 1) {
-          result.versions.jSSDKVersion = matches[1];
-        } else {
-          result.warnings.push('fh js-sdk version not found in ' + res.globs.hasJSSDKLocation[0]);
-          return pcb();
-        }
-
-        request('https://raw.githubusercontent.com/feedhenry/fh-js-sdk/master/package.json', function(err, res, body) {
+        request('https://raw.githubusercontent.com/feedhenry/fh-js-sdk/master/package.json', function(err, response, body) {
           if (err) return pcb(err);
 
           var package = JSON.parse(body);
           var latestJSSDKVersion = package.version.replace(/-BUILD-NUMBER/g, '');
           process.env.DEBUG && console.log(latestJSSDKVersion);
-
-          try {
-            if (!semver.satisfies(latestJSSDKVersion, result.versions.jSSDKVersion.replace(/-BUILD-NUMBER/g, ''))) {
-              result.warnings.push('fh js-sdk version (' + result.versions.jSSDKVersion + ') does not satisfy the latest version ' + latestJSSDKVersion);
+          async.map(res.globs.hasJSSDKLocation, function(location, mcb) {
+            // check jssdk version
+            // Try first location
+            process.env.DEBUG && console.log('hasJSSDKLocation', location);
+            var contents = fs.readFileSync(location);
+            var regex = /\"?sdk_version\"?:.*?\"(.+?)\"/g;
+            var matches = regex.exec(contents.toString('utf-8'));
+            var this_version;
+            if (matches && matches.length > 1) {
+              this_version = matches[1];
+              result.versions.jSSDKVersion = result.versions.jSSDKVersion || {};
+              result.versions.jSSDKVersion[location] = (this_version);
+            } else {
+              result.warnings.push('fh js-sdk version not found in ' + location);
+              return mcb();
             }
-          } catch (e) {
-            result.warnings.push('Unable to determine fh js-sdk version: ' + e.toString());
-          }
-          return pcb();
+
+            try {
+              if (!semver.satisfies(latestJSSDKVersion, this_version.replace(/-BUILD-NUMBER/g, ''))) {
+                result.warnings.push('fh js-sdk version (' + this_version + ') in ' + location + ' does not satisfy the latest version ' + latestJSSDKVersion);
+
+                if (process.env.FHLINT_FIX) {
+                  console.log('creating write stream to ', location);
+                  var file = fs.createWriteStream(location);
+                  https.get('https://raw.githubusercontent.com/feedhenry/fh-js-sdk/master/dist/feedhenry.js', function(sdk_stream) {
+                    console.log('got sdk_stream stream');
+                    sdk_stream.pipe(file);
+                    file.on('finish', function() {
+                      console.log('finish file write pipe');
+                      file.close(mcb);
+                    });
+                  });
+                } else {
+                  return mcb();
+                }
+              } else {
+                return mcb();
+              }
+            } catch (e) {
+              result.warnings.push('Unable to determine fh js-sdk version: ' + e.toString());
+              return mcb();
+            }
+          }, pcb);
         });
       } else {
         return pcb();
@@ -91,13 +117,19 @@ module.exports = function(dir, cb) {
       if (res.flags.hasApplicationJS && res.flags.hasPackageJson) {
         // check fh-mbaas-api version
         process.env.DEBUG && console.log(path.join(dir, 'package.json'));
-        var package = JSON.parse(fs.readFileSync(res.globs.hasPackageJsonLocation[0]));
+        // TODO: allow for multiple application.js files (maybe tests have a copy)
+        var location = res.globs.hasPackageJsonLocation[0];
+        var package = JSON.parse(fs.readFileSync(location));
         process.env.DEBUG && console.log(package);
+        var this_version = 'unknown';
         if (package.dependencies['fh-mbaas-api']) {
-          result.versions.fhMbaasApiVersion = package.dependencies['fh-mbaas-api'];
+          this_version = package.dependencies['fh-mbaas-api'];
+          result.versions.fhMbaasApiVersion = result.versions.fhMbaasApiVersion || {};
+          result.versions.fhMbaasApiVersion[location] = this_version;
         } else {
           result.warnings.push('fh-mbaas-api not found in package.json dependencies');
         }
+
         npm.load({
           loaded: false
         }, function (err) {
@@ -107,11 +139,9 @@ module.exports = function(dir, cb) {
             if (err) return pcb(err);
 
             var latestMbaasVersion = data[Object.keys(data)[0]].version;
-            // var mbaasVersionMatch = /.*?(\d+\.\d+\.\d+).*/g.exec(result.versions.fhMbaasApiVersion);
-            // var mbaasVersion = mbaasVersionMatch !== null ? mbaasVersionMatch[1] : null;
             try {
-              if(!semver.satisfies(latestMbaasVersion, result.versions.fhMbaasApiVersion)) {
-                result.warnings.push('fh-mbaas-api version (' + result.versions.fhMbaasApiVersion + ') does not satisfy the latest version ' + latestMbaasVersion);
+              if(!semver.satisfies(latestMbaasVersion, this_version)) {
+                result.warnings.push('fh-mbaas-api version (' + this_version + ') does not satisfy the latest version ' + latestMbaasVersion);
               }
             } catch (e) {
               result.warnings.push('Unable to determine fh-mbaas-api version: ' + e.toString());
@@ -135,6 +165,67 @@ module.exports = function(dir, cb) {
         });
       }
       return pcb();
+    }, function applicationJsCheck(pcb) {
+      if (res.flags.hasApplicationJS) {
+        fs.readFile(path.join(__dirname, 'sample', 'application.js'), function compareSample(err, data) {
+          if (err) return pcb(err);
+
+          var sample = data.toString();
+          async.map(res.globs.hasApplicationJSLocation, function compareSampleWithApplicationJs(location, mcb) {
+            fs.readFile(location, function(err, data) {
+              if (err) return mcb(err);
+
+              var applicationJs = data.toString().replace(/(\/\/\s+fhlint-begin.*?\n)([^]*?)(\/\/\s+fhlint-end)/g, function(original, a, b, c) {
+                process.env.DEBUG && console.log('match:', arguments);
+                return a + c;
+              });
+              var diff = jsdiff.diffLines(applicationJs, sample);
+
+              var unifiedDiff = '';
+              if (diff.length > 1 || (diff[0].added || diff[0].removed)) {
+                process.env.DEBUG && console.log('diff:', diff);
+                unifiedDiff = jsdiff.createPatch(location, applicationJs, sample);
+                result.warnings.push(location + ' is diverged from latest application.js template :\n' + unifiedDiff);
+
+                if (process.env.FHLINT_FIX) {
+                  fs.writeFileSync(location, jsdiff.applyPatch(applicationJs, unifiedDiff));
+                }
+              }
+
+              return mcb();
+            });
+          }, pcb);
+        });
+      } else {
+        return pcb();
+      }
+    }, function checkPublicIndex(pcb) {
+      if (res.flags.hasApplicationJS) {
+        var index = path.join(dir, 'public', 'index.html');
+        fs.exists(index, function(err, exists) {
+          if (err) return pcb(err);
+
+          if (!exists) {
+            result.warnings.push('Could not find static index file at ' + index);
+            if (process.env.FHLINT_FIX) {
+              mkdirp(path.join(dir, 'public'), function (err) {
+                if (err) return pcb(err);
+
+                fs.copy(path.join(__dirname, 'sample', 'index.html'), index, function(err){
+                  if (err) return pcb(err);
+                  return pcb();
+                });
+              });
+            } else {
+              return pcb();
+            }
+          } else {
+            return pcb();
+          }
+        });
+      } else {
+        return pcb();
+      }
     }], function(err, res) {
       return cb(err, result);
     });
