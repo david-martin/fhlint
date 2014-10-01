@@ -16,12 +16,14 @@ require('../index.js')(process.argv[2], function(err, res) {
     process.exit(1);
   }
   // TODO: args to turn on/off json output
-  console.log(JSON.stringify(res, true, 2));
+  if (process.argv[3] && process.argv[3] === '--json') console.log(JSON.stringify(res, true, 2));
+  
   if (res.warnings.length > 0) {
     res.warnings.forEach(function printWarnings(warning) {
       console.log('WARNING: ', warning);
     });
     process.exit(2);
   }
+  console.log('No issues detected');
   process.exit(0);
 });
