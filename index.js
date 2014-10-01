@@ -6,7 +6,7 @@ var semver = require('semver');
 var request = require('request');
 var jsdiff = require('diff');
 var mkdirp = require('mkdirp');
-var fs = require('fs');
+var fs = require('fs-extra');
 var http = require('http');
 var https = require('https');
 
