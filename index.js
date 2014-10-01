@@ -49,7 +49,7 @@ module.exports = function(dir, cb) {
     async.parallel([function jSSDKVersionCheck(pcb) {
       if (res.flags.hasJSSDK) {
         request('https://raw.githubusercontent.com/feedhenry/fh-js-sdk/master/package.json', function(err, response, body) {
-          if (err) return pcb(err);
+          if (err) throw err;
 
           var package = JSON.parse(body);
           var latestJSSDKVersion = package.version.replace(/-BUILD-NUMBER/g, '');
@@ -133,10 +133,10 @@ module.exports = function(dir, cb) {
         npm.load({
           loaded: false
         }, function (err) {
-          if (err) return pcb(err);
+          if (err) throw err;
 
           npm.commands.show(['fh-mbaas-api', 'version'], true, function(err, data) {
-            if (err) return pcb(err);
+            if (err) throw err;
 
             var latestMbaasVersion = data[Object.keys(data)[0]].version;
             try {
@@ -168,12 +168,12 @@ module.exports = function(dir, cb) {
     }, function applicationJsCheck(pcb) {
       if (res.flags.hasApplicationJS) {
         fs.readFile(path.join(__dirname, 'sample', 'application.js'), function compareSample(err, data) {
-          if (err) return pcb(err);
+          if (err) throw err;
 
           var sample = data.toString();
           async.map(res.globs.hasApplicationJSLocation, function compareSampleWithApplicationJs(location, mcb) {
             fs.readFile(location, function(err, data) {
-              if (err) return mcb(err);
+              if (err) throw err;
 
               var applicationJs = data.toString().replace(/(\/\/\s+fhlint-begin.*?\n)([^]*?)(\/\/\s+fhlint-end)/g, function(original, a, b, c) {
                 process.env.DEBUG && console.log('match:', arguments);
@@ -202,17 +202,17 @@ module.exports = function(dir, cb) {
     }, function checkPublicIndex(pcb) {
       if (res.flags.hasApplicationJS) {
         var index = path.join(dir, 'public', 'index.html');
-        fs.exists(index, function(err, exists) {
-          if (err) return pcb(err);
+        fs.exists(index, function(exists) {
+          if (err) throw err;
 
           if (!exists) {
             result.warnings.push('Could not find static index file at ' + index);
             if (process.env.FHLINT_FIX) {
               mkdirp(path.join(dir, 'public'), function (err) {
-                if (err) return pcb(err);
+                if (err) throw err;
 
                 fs.copy(path.join(__dirname, 'sample', 'index.html'), index, function(err){
-                  if (err) return pcb(err);
+                  if (err) throw err;
                   return pcb();
                 });
               });
